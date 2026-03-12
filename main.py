@@ -163,8 +163,13 @@ class MacroLoopApp:
         self.pay_axis      = []
         self.need_seat_cnt = 2    # 연석 기본값
 
+        # ── 자동 정지 색상 감지 ────────────────────────────────────
+        self.stop_color    = None  # (R, G, B)
+
         # ESC 키로 매크로 취소
         keyboard.on_press_key("esc", lambda _: self._on_esc())
+        # A 키로 매크로 시작
+        keyboard.on_press_key("a", lambda _: self._on_start_key())
 
         # ── ttk style (kept minimal — most styling done via tk widgets) ───────
         self.style = ttk.Style()
@@ -197,9 +202,41 @@ class MacroLoopApp:
     def build_ui(self):
         """Construct the entire UI layout."""
 
-        # ── Outer padding shell ───────────────────────────────────────────────
-        outer = tk.Frame(self.root, bg=COLORS["base"])
-        outer.pack(fill="both", expand=True, padx=16, pady=16)
+        # ── Scrollable shell ──────────────────────────────────────────────────
+        self._scroll_canvas = tk.Canvas(self.root, bg=COLORS["base"],
+                                        highlightthickness=0)
+        self._scrollbar = tk.Scrollbar(self.root, orient="vertical",
+                                       command=self._scroll_canvas.yview,
+                                       bg=COLORS["surface1"],
+                                       troughcolor=COLORS["base"], width=8)
+        self._scroll_canvas.configure(yscrollcommand=self._scrollbar.set)
+
+        self._scrollbar.pack(side="right", fill="y")
+        self._scroll_canvas.pack(side="left", fill="both", expand=True)
+
+        outer = tk.Frame(self._scroll_canvas, bg=COLORS["base"])
+        self._scroll_window = self._scroll_canvas.create_window(
+            (0, 0), window=outer, anchor="nw")
+
+        # Keep scroll region up-to-date
+        def _on_configure(event):
+            self._scroll_canvas.configure(scrollregion=self._scroll_canvas.bbox("all"))
+        outer.bind("<Configure>", _on_configure)
+
+        # Match inner frame width to canvas width
+        def _on_canvas_configure(event):
+            self._scroll_canvas.itemconfigure(self._scroll_window, width=event.width)
+        self._scroll_canvas.bind("<Configure>", _on_canvas_configure)
+
+        # Mouse wheel scrolling
+        def _on_mousewheel(event):
+            self._scroll_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+        self.root.bind_all("<MouseWheel>", _on_mousewheel)
+
+        # Add padding inside the scrollable frame
+        outer_padded = tk.Frame(outer, bg=COLORS["base"])
+        outer_padded.pack(fill="both", expand=True, padx=16, pady=16)
+        outer = outer_padded
 
         # ── Header bar ───────────────────────────────────────────────────────
         self._build_header(outer)
@@ -310,7 +347,7 @@ class MacroLoopApp:
 
         self.log_text = tk.Text(
             log_bg, bg=COLORS["mantle"], fg=COLORS["green"],
-            font=("Consolas", 9), height=3, bd=0, wrap="word",
+            font=("Consolas", 9), height=2, bd=0, wrap="word",
             state="disabled", insertbackground=COLORS["text"],
             selectbackground=COLORS["surface1"],
             selectforeground=COLORS["text"], padx=10, pady=8,
@@ -402,6 +439,7 @@ class MacroLoopApp:
 
         self._build_run_card(panel)
         self._build_setup_card(panel)
+        self._build_stop_color_card(panel)
         self._build_color_card(panel)
 
     # ── Run card ──────────────────────────────────────────────────────────────
@@ -440,7 +478,7 @@ class MacroLoopApp:
 
         # ── Buttons ───────────────────────────────────────────────────────────
         btn_data = [
-            ("매크로 시작",   self.start_first_floor,
+            ("매크로 시작  (A)",   self.start_first_floor,
              COLORS["surface0"], COLORS["surface1"], COLORS["surface2"],
              COLORS["green"],    COLORS["green"],
              "▶"),
@@ -517,6 +555,65 @@ class MacroLoopApp:
 
             # Store dot reference so mark_setup can update it
             self.setup_status_labels[text] = (dot, dot_id)
+
+    # ── Stop color card ──────────────────────────────────────────────────────
+
+    def _build_stop_color_card(self, parent):
+        card = self._card(parent, pady=(0, 10))
+        self._card_header(card, "자동 정지 색상", COLORS["red"], "좌석 영역에서 감지 시 자동 중지")
+
+        inner = tk.Frame(card, bg=COLORS["surface0"])
+        inner.pack(fill="x", padx=12, pady=(4, 12))
+
+        # 정지 색상 선택 버튼
+        row = tk.Frame(inner, bg=COLORS["surface0"])
+        row.pack(fill="x", pady=(0, 6))
+
+        dot = tk.Canvas(row, width=8, height=8,
+                        bg=COLORS["surface0"], highlightthickness=0)
+        dot.pack(side="left", padx=(0, 6), pady=6)
+        dot_id = dot.create_oval(1, 1, 7, 7, fill=COLORS["red"], outline="")
+
+        col = tk.Frame(row, bg=COLORS["surface0"])
+        col.pack(side="left", fill="x", expand=True)
+
+        btn = HoverButton(
+            col, text="정지 색상 선택",
+            command=lambda: self.run_in_thread(self.get_stop_color),
+            bg_normal=COLORS["surface0"],
+            bg_hover=COLORS["surface1"],
+            bg_active=COLORS["surface2"],
+            fg=COLORS["text"],
+            border_color=COLORS["surface1"],
+            border_hover=COLORS["red"],
+            font_size=9, bold=False,
+            width=210, height=28,
+            radius=6,
+        )
+        btn.configure(bg=COLORS["surface0"])
+        btn.pack(anchor="w")
+
+        tk.Label(col, text="Z키: 색상 지정",
+                 bg=COLORS["surface0"], fg=COLORS["sky"],
+                 font=(FONT_FAMILY, 8)).pack(anchor="w")
+
+        self.setup_status_labels["정지 색상 선택"] = (dot, dot_id)
+
+        # 정지 색상 미리보기
+        preview_row = tk.Frame(inner, bg=COLORS["surface0"])
+        preview_row.pack(fill="x", pady=(4, 0))
+        tk.Label(preview_row, text="정지 색상",
+                 bg=COLORS["surface0"], fg=COLORS["subtext0"],
+                 font=(FONT_FAMILY, 8)).pack(side="left")
+        self._stop_color_canvas = tk.Canvas(preview_row, width=30, height=18,
+                                            bg=COLORS["surface1"],
+                                            highlightthickness=1,
+                                            highlightbackground=COLORS["surface1"])
+        self._stop_color_canvas.pack(side="right", padx=(0, 4))
+        self._stop_color_hex_var = tk.StringVar(value="미설정")
+        tk.Label(preview_row, textvariable=self._stop_color_hex_var,
+                 bg=COLORS["surface0"], fg=COLORS["text"],
+                 font=("Consolas", 8)).pack(side="right", padx=(0, 4))
 
     # ── Color card ────────────────────────────────────────────────────────────
 
@@ -667,6 +764,11 @@ class MacroLoopApp:
         if self.is_running:
             self.stop_infinite_loop()
 
+    def _on_start_key(self):
+        """A 키로 매크로 시작"""
+        if not self.is_running and not self.waiting_input:
+            self.start_first_floor()
+
     def start_floor_loop(self, floor_function):
         if not self.is_running:
             self.is_running = True
@@ -696,11 +798,25 @@ class MacroLoopApp:
                         self.log(f"영역 #{area_index % len(self.time_axis) + 1} 클릭: ({pos.x}, {pos.y})", "info")
                         self.double_click(pos.x, pos.y)
                         area_index += 1
-                    time.sleep(1)
+                    time.sleep(1.1)
                 except Exception as e:
                     self.is_running = False
                     self.log(f"영역 클릭 Error: {e}", "error")
                     self.set_status("오류 발생", "error")
+                    return
+
+        # 정지 색상 감지 스레드
+        def stop_color_watch_loop():
+            while self.is_running:
+                try:
+                    if self.check_stop_color():
+                        self.is_running = False
+                        self.set_status("정지 색상 감지 — 매크로 자동 중지", "error")
+                        self.log("정지 색상이 감지되어 매크로가 자동 중지되었습니다", "error")
+                        return
+                    time.sleep(0.2)
+                except Exception as e:
+                    self.log(f"정지 색상 감지 Error: {e}", "error")
                     return
 
         # 좌석 스캔 스레드: 쉬지 않고 계속 스캔
@@ -718,8 +834,10 @@ class MacroLoopApp:
             self.set_status("대기 중", "idle")
             self.log("매크로 루프 종료", "warn")
 
-        # 두 스레드 동시 실행
+        # 세 스레드 동시 실행
         threading.Thread(target=area_click_loop, daemon=True).start()
+        if self.seat_axis and self.stop_color:
+            threading.Thread(target=stop_color_watch_loop, daemon=True).start()
         seat_scan_loop()  # 현재 스레드에서 스캔 실행
 
     def get_position(self, key="z", label="좌표"):
@@ -733,6 +851,7 @@ class MacroLoopApp:
                 return pos
 
     def get_axis(self):
+        self.waiting_input = True
         self.set_status("좌석 영역 선택 모드", "warning")
         left_top     = self.get_position("z", "좌상단 좌표")
         right_bottom = self.get_position("x", "우하단 좌표")
@@ -742,6 +861,7 @@ class MacroLoopApp:
         self.set_status("대기 중", "idle")
         self.mark_setup("좌석 영역 선택")
         self.capture_region(left_top, right_bottom)
+        self.waiting_input = False
 
     def capture_region(self, left_top, right_bottom):
         captured_image = ImageGrab.grab(bbox=(left_top[0], left_top[1],
@@ -790,14 +910,15 @@ class MacroLoopApp:
         self.color_hex_var.set(f"{hex_color}")
 
     def get_color(self):
-        self.set_status("색상 선택 모드: A=추가, C=완료", "warning")
-        self.log("색상 선택 모드 진입 — A키: 색상 추가  /  C키: 완료", "warn")
-        screen          = ImageGrab.grab()
+        self.waiting_input = True
+        self.set_status("색상 선택 모드: Z=추가, C=완료", "warning")
+        self.log("색상 선택 모드 진입 — Z키: 색상 추가  /  C키: 완료", "warn")
         my_class_list   = []
         count           = 0
         while True:
             key = keyboard.read_key()
             if key == "z":
+                screen = ImageGrab.grab()
                 x, y = pyautogui.position()
                 rgb  = screen.getpixel((x, y))
                 my_class_list.append(rgb)
@@ -811,6 +932,7 @@ class MacroLoopApp:
                 self.log(f"색상 선택 완료: {len(self.seat_class)}개 등록됨", "success")
                 self.set_status("대기 중", "idle")
                 self.mark_setup("좌석 등급(색상) 선택")
+                self.waiting_input = False
                 break
 
     def _update_area_list(self):
@@ -821,6 +943,7 @@ class MacroLoopApp:
         self._area_count_var.set(f"{len(self.time_axis)}개")
 
     def get_time(self):
+        self.waiting_input = True
         self.time_axis = []
         self.set_status("영역 좌표 선택: Z키=추가, C키=완료", "warning")
         self.log("영역 좌표 선택 모드 — Z키: 좌표 추가 / C키: 완료", "warn")
@@ -838,13 +961,53 @@ class MacroLoopApp:
                 self.log(f"영역 좌표 설정 완료: {len(self.time_axis)}개 등록됨", "success")
                 self.set_status("대기 중", "idle")
                 self.mark_setup("영역 선택 좌표")
+                self.waiting_input = False
                 break
 
     def select_axis(self):
+        self.waiting_input = True
         self.pay_axis = self.get_position("z", "선택 완료 좌표")
         self.log(f"선택 완료 좌표 설정 완료: ({self.pay_axis.x}, {self.pay_axis.y})", "success")
         self.set_status("대기 중", "idle")
         self.mark_setup("선택 완료 좌표")
+        self.waiting_input = False
+
+    def get_stop_color(self):
+        self.waiting_input = True
+        self.set_status("정지 색상 선택: Z키로 색상 지정", "warning")
+        self.log("정지 색상 선택 모드 — Z키: 마우스 위치의 색상 지정", "warn")
+        while True:
+            key = keyboard.read_key()
+            if key == "z":
+                screen = ImageGrab.grab()
+                x, y = pyautogui.position()
+                rgb = screen.getpixel((x, y))
+                self.stop_color = rgb
+                hex_c = "#{:02X}{:02X}{:02X}".format(*rgb)
+                self._stop_color_canvas.delete("all")
+                self._stop_color_canvas.create_rectangle(0, 0, 30, 18, fill=hex_c, outline="")
+                self._stop_color_hex_var.set(f"{hex_c}  RGB({rgb[0]}, {rgb[1]}, {rgb[2]})")
+                self.log(f"정지 색상 설정: {hex_c} RGB({rgb[0]}, {rgb[1]}, {rgb[2]}) at ({x}, {y})",
+                         "success")
+                self.set_status("대기 중", "idle")
+                self.mark_setup("정지 색상 선택")
+                self.waiting_input = False
+                time.sleep(0.2)
+                break
+
+    def check_stop_color(self):
+        """좌석 영역에서 정지 색상이 감지되면 True 반환"""
+        if not self.seat_axis or not self.stop_color:
+            return False
+        delta_error = 10
+        screen = ImageGrab.grab()
+        lt, rb = self.seat_axis
+        for y in range(lt[1], rb[1], 7):
+            for x in range(lt[0], rb[0], 7):
+                rgb = screen.getpixel((x, y))
+                if all(abs(rgb[k] - self.stop_color[k]) <= delta_error for k in range(3)):
+                    return True
+        return False
 
     def click(self, x, y):
         pyautogui.click(x, y)
@@ -872,17 +1035,20 @@ class MacroLoopApp:
                             rgb2 = screen.getpixel((i + 10, j))
                             if all(abs(rgb2[k] - color) <= delta_error
                                    for k, color in enumerate((r, g, b))):
-                                self.click(i, j)
-                                self.click(i + 10, j)
-                                self.click(*self.pay_axis)
                                 self.is_running = False
+                                self.click(i, j)
+                                time.sleep(0.08)
+                                self.click(i + 10, j)
+                                time.sleep(0.08)
+                                self.click(*self.pay_axis)
                                 self.set_status("좌석 발견! 클릭 완료", "success")
                                 self.log(f"좌석 발견: ({i}, {j}) — 자동 클릭 완료", "success")
                                 return True
                         elif self.need_seat_cnt == 1:
-                            self.click(i, j)
-                            self.click(*self.pay_axis)
                             self.is_running = False
+                            self.click(i, j)
+                            time.sleep(0.08)
+                            self.click(*self.pay_axis)
                             self.set_status("좌석 발견! 클릭 완료", "success")
                             self.log(f"좌석 발견: ({i}, {j}) — 자동 클릭 완료", "success")
                             return True
@@ -893,7 +1059,15 @@ class MacroLoopApp:
 if __name__ == "__main__":
     root = tk.Tk()
     root.title("Ticket Macro")
-    root.geometry("680x890")
-    root.resizable(False, False)
+
+    # 화면 크기에 맞게 창 크기 조정
+    screen_w = root.winfo_screenwidth()
+    screen_h = root.winfo_screenheight()
+    win_w = min(680, screen_w - 40)
+    win_h = min(890, screen_h - 80)
+    root.geometry(f"{win_w}x{win_h}")
+    root.resizable(False, True)
+    root.minsize(win_w, 400)
+
     app = MacroLoopApp(root)
     root.mainloop()
