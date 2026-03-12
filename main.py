@@ -161,7 +161,7 @@ class MacroLoopApp:
         self.seat_class    = set()
         self.time_axis     = []
         self.pay_axis      = []
-        self.need_seat_cnt = 2    # 연석 기본값
+        self.need_seat_cnt = 1    # 기본값 1석
 
         # ── 자동 정지 색상 감지 ────────────────────────────────────
         self.stop_color    = None  # (R, G, B)
@@ -460,7 +460,7 @@ class MacroLoopApp:
                  bg=COLORS["surface0"], fg=COLORS["subtext0"],
                  font=(FONT_FAMILY, 8)).pack(side="left", padx=(0, 8))
 
-        self.seat_cnt_var = tk.IntVar(value=2)
+        self.seat_cnt_var = tk.IntVar(value=1)
         for val, txt in [(1, "1석"), (2, "2석 (연석)")]:
             rb = tk.Radiobutton(
                 rc_frame, text=txt,
