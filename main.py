@@ -172,12 +172,14 @@ class MacroLoopApp:
         # ── 자동 정지 색상 감지 ────────────────────────────────────
         self.stop_color    = None  # (R, G, B)
 
-        # ── 취소 키 (기본 ESC, 변경 가능) ─────────────────────────
-        self.stop_key      = "esc"
-        self._stop_key_var = tk.StringVar(value="ESC")
-        self._stop_key_hook = keyboard.on_press_key(self.stop_key, lambda _: self._on_esc())
-        # A 키로 매크로 시작
-        keyboard.on_press_key("a", lambda _: self._on_start_key())
+        # ── 시작 키 / 취소 키 (기본값, 변경 가능) ────────────────
+        self.start_key       = "a"
+        self._start_key_var  = tk.StringVar(value="A")
+        self._start_key_hook = keyboard.on_press_key(self.start_key, lambda _: self._on_start_key())
+
+        self.stop_key        = "esc"
+        self._stop_key_var   = tk.StringVar(value="ESC")
+        self._stop_key_hook  = keyboard.on_press_key(self.stop_key, lambda _: self._on_esc())
 
         # ── ttk style (kept minimal — most styling done via tk widgets) ───────
         self.style = ttk.Style()
@@ -486,7 +488,7 @@ class MacroLoopApp:
 
         # ── Buttons ───────────────────────────────────────────────────────────
         btn_data = [
-            ("매크로 시작  (A)",   self.start_first_floor,
+            ("매크로 시작",   self.start_first_floor,
              COLORS["surface0"], COLORS["surface1"], COLORS["surface2"],
              COLORS["green"],    COLORS["green"],
              "▶"),
@@ -510,26 +512,27 @@ class MacroLoopApp:
             b.configure(bg=COLORS["surface0"])
             b.pack(pady=(0, 6), anchor="w")
 
-        # ── 취소 키 설정 행 ───────────────────────────────────────────────────
-        key_row = tk.Frame(inner, bg=COLORS["surface0"])
-        key_row.pack(fill="x", pady=(2, 0))
-
-        tk.Label(key_row, text="취소 키",
-                 bg=COLORS["surface0"], fg=COLORS["subtext0"],
-                 font=(FONT_FAMILY, 8)).pack(side="left", padx=(0, 8))
-
-        key_badge = tk.Label(key_row, textvariable=self._stop_key_var,
-                             bg=COLORS["surface1"], fg=COLORS["red"],
+        # ── 시작 키 / 취소 키 설정 행 ────────────────────────────────────────
+        def _key_row(label_text, str_var, badge_color, capture_fn):
+            row = tk.Frame(inner, bg=COLORS["surface0"])
+            row.pack(fill="x", pady=(2, 0))
+            tk.Label(row, text=label_text,
+                     bg=COLORS["surface0"], fg=COLORS["subtext0"],
+                     font=(FONT_FAMILY, 8)).pack(side="left", padx=(0, 8))
+            badge = tk.Label(row, textvariable=str_var,
+                             bg=COLORS["surface1"], fg=badge_color,
                              font=(FONT_FAMILY, 9, "bold"), padx=7, pady=2)
-        key_badge.pack(side="left", padx=(0, 8))
+            badge.pack(side="left", padx=(0, 8))
+            btn = tk.Label(row, text="변경",
+                           bg=COLORS["surface0"], fg=COLORS["lavender"],
+                           font=(FONT_FAMILY, 8), cursor="hand2")
+            btn.pack(side="left")
+            btn.bind("<Enter>", lambda e: btn.configure(fg=COLORS["blue"]))
+            btn.bind("<Leave>", lambda e: btn.configure(fg=COLORS["lavender"]))
+            btn.bind("<ButtonRelease-1>", lambda e: capture_fn())
 
-        change_btn = tk.Label(key_row, text="변경",
-                              bg=COLORS["surface0"], fg=COLORS["lavender"],
-                              font=(FONT_FAMILY, 8), cursor="hand2")
-        change_btn.pack(side="left")
-        change_btn.bind("<Enter>", lambda e: change_btn.configure(fg=COLORS["blue"]))
-        change_btn.bind("<Leave>", lambda e: change_btn.configure(fg=COLORS["lavender"]))
-        change_btn.bind("<ButtonRelease-1>", lambda e: self._start_stop_key_capture())
+        _key_row("시작 키", self._start_key_var, COLORS["green"],  self._start_start_key_capture)
+        _key_row("취소 키", self._stop_key_var,  COLORS["red"],    self._start_stop_key_capture)
 
     # ── Setup card ────────────────────────────────────────────────────────────
 
@@ -784,37 +787,53 @@ class MacroLoopApp:
         if self.is_running:
             self.stop_infinite_loop()
 
+    @staticmethod
+    def _key_display(key):
+        return key.upper() if len(key) == 1 else key.capitalize()
+
+    def _set_start_key(self, new_key):
+        keyboard.unhook(self._start_key_hook)
+        self.start_key = new_key
+        self._start_key_hook = keyboard.on_press_key(new_key, lambda _: self._on_start_key())
+        display = self._key_display(new_key)
+        self.root.after(0, lambda d=display: self._start_key_var.set(d))
+        self.log(f"시작 키 변경: {display}", "info")
+
     def _set_stop_key(self, new_key):
         keyboard.unhook(self._stop_key_hook)
         self.stop_key = new_key
         self._stop_key_hook = keyboard.on_press_key(new_key, lambda _: self._on_esc())
-        display = new_key.upper() if len(new_key) == 1 else new_key.capitalize()
+        display = self._key_display(new_key)
         self.root.after(0, lambda d=display: self._stop_key_var.set(d))
         self.log(f"취소 키 변경: {display}", "info")
 
-    def _start_stop_key_capture(self):
+    def _capture_key(self, label, conflict_key, current_key, str_var, set_fn):
         if self.waiting_input:
             return
-        def _capture():
+        def _run():
             self.waiting_input = True
             try:
-                self.root.after(0, lambda: self._stop_key_var.set("···"))
-                self.set_status("취소 키로 사용할 키를 누르세요...", "warning")
+                self.root.after(0, lambda: str_var.set("···"))
+                self.set_status(f"{label}로 사용할 키를 누르세요...", "warning")
                 new_key = keyboard.read_key(suppress=False)
                 time.sleep(0.1)
-                if new_key == "a":
-                    self.log("'A' 키는 시작 키와 충돌합니다 — 변경이 취소되었습니다", "error")
-                    cur = self.stop_key.upper() if len(self.stop_key) == 1 else self.stop_key.capitalize()
-                    self.root.after(0, lambda c=cur: self._stop_key_var.set(c))
+                if new_key == conflict_key:
+                    self.log(f"'{self._key_display(conflict_key)}' 키는 다른 키와 충돌합니다 — 변경이 취소되었습니다", "error")
+                    self.root.after(0, lambda c=self._key_display(current_key): str_var.set(c))
                 else:
-                    self._set_stop_key(new_key)
+                    set_fn(new_key)
                 self.set_status("대기 중", "idle")
             finally:
                 self.waiting_input = False
-        self.run_in_thread(_capture)
+        self.run_in_thread(_run)
+
+    def _start_start_key_capture(self):
+        self._capture_key("시작 키", self.stop_key,  self.start_key, self._start_key_var, self._set_start_key)
+
+    def _start_stop_key_capture(self):
+        self._capture_key("취소 키", self.start_key, self.stop_key,  self._stop_key_var,  self._set_stop_key)
 
     def _on_start_key(self):
-        """A 키로 매크로 시작"""
         if not self.is_running and not self.waiting_input:
             self.start_first_floor()
 
