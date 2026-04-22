@@ -6,6 +6,12 @@ import random
 from PIL import ImageGrab, Image, ImageTk
 import threading
 import time
+import sys
+import os
+
+def _resource_path(filename):
+    base = getattr(sys, '_MEIPASS', os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(base, filename)
 
 
 # ---------------------------------------------------------------------------
@@ -1092,7 +1098,7 @@ class MacroLoopApp:
                 import pygame
                 if not pygame.mixer.get_init():
                     pygame.mixer.init()
-                pygame.mixer.music.load("bell.mp3")
+                pygame.mixer.music.load(_resource_path("bell.mp3"))
                 pygame.mixer.music.play()
             except Exception:
                 pass
