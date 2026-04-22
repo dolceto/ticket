@@ -181,6 +181,8 @@ class MacroLoopApp:
         self._stop_key_var   = tk.StringVar(value="ESC")
         self._stop_key_hook  = keyboard.on_press_key(self.stop_key, lambda _: self._on_esc())
 
+        self.bell_enabled    = tk.BooleanVar(value=True)
+
         # ── ttk style (kept minimal — most styling done via tk widgets) ───────
         self.style = ttk.Style()
         self.style.theme_use("clam")
@@ -533,6 +535,22 @@ class MacroLoopApp:
 
         _key_row("시작 키", self._start_key_var, COLORS["green"],  self._start_start_key_capture)
         _key_row("취소 키", self._stop_key_var,  COLORS["red"],    self._start_stop_key_capture)
+
+        # ── 알림음 토글 ───────────────────────────────────────────────────────
+        bell_row = tk.Frame(inner, bg=COLORS["surface0"])
+        bell_row.pack(fill="x", pady=(6, 0))
+
+        bell_cb = tk.Checkbutton(
+            bell_row, text="좌석 발견 시 알림음 재생",
+            variable=self.bell_enabled,
+            bg=COLORS["surface0"], fg=COLORS["subtext0"],
+            activebackground=COLORS["surface0"],
+            activeforeground=COLORS["text"],
+            selectcolor=COLORS["surface1"],
+            font=(FONT_FAMILY, 8),
+            bd=0, highlightthickness=0, cursor="hand2",
+        )
+        bell_cb.pack(side="left")
 
     # ── Setup card ────────────────────────────────────────────────────────────
 
@@ -1112,6 +1130,8 @@ class MacroLoopApp:
         pyautogui.press(key)
 
     def _play_bell(self):
+        if not self.bell_enabled.get():
+            return
         def _inner():
             try:
                 import pygame
